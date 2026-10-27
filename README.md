@@ -1,6 +1,6 @@
 # Claude Code 提示词覆盖实测笔记
 
-在 Claude Code 里减少"无谓拒绝"的一套可复用方法，附四轮对照实验的实测数据。
+在 Claude Code 里减少"无谓拒绝"的一套可复用方法，附六轮对照实验的实测数据。
 
 不是理论推演，全部在本机跑过，包括失败的那些。
 
@@ -55,28 +55,54 @@ You are Claude Code, Anthropic's official CLI for Claude.
 
 ---
 
+## 替换之后，什么还在、什么丢了
+
+一个容易搞错的点：`--system-prompt-file` 换的是 system prompt 里"身份 + 准则"那一段，不是整个运行时。实测（2.1.311）逐项确认过：
+
+| 项目 | 走哪条通道 | 状态 |
+| --- | --- | --- |
+| 工具定义（Read / Edit / Bash / …） | API 的 `tools` 字段 | 保留 |
+| 工作目录、日期、平台信息 | 环境块注入 | 保留 |
+| `CLAUDE.md` 全局指令 | memory 通道 | 保留 |
+| `MEMORY.md` / 项目记忆 | memory 通道 | 保留 |
+| skills 列表 | 插件通道 | 保留 |
+| 子代理（Explore / general-purpose） | 各自独立 prompt | 不受影响 |
+| 身份声明与行为准则 | system prompt 前半段 | **被替换** |
+| "何时用哪个工具"的策略提示 | system prompt | **被替换** |
+
+验证方法：用一份只有四五段的自定义 prompt 起一个 `-p` 会话，问它工作目录、日期、全局指令内容、可用 skills。四项都能答对，说明这些通道没被替换波及。
+
+**所以真正需要补回来的只有工具策略**，大约十条：先定位再读取、并行调用互不依赖的工具、改代码前先搜引用、改完要验证、失败换方法不重复。补上之后日常任务感觉不到差别，剩下的差距只在大型多文件重构时才显出来。
+
+---
+
 ## 落地一：CLI / 桌面启动器（推荐）
 
 ### 1. 写一份替换用的 system prompt
 
 放到 `~/.claude/system-prompt.md`，参考 [`configs/system-prompt.md`](configs/system-prompt.md)。
 
-四段结构，缺一不可：
+五段结构，缺一不可：
 
 1. **运行环境** —— 谁在什么机器上，不要假设路径和状态，需要就用工具取
 2. **工具纪律** —— Read/Edit/Write/Glob/Grep/Bash 各管什么，写文件前先读
-3. **处理口径** —— 哪些类别按普通信息需求处理，不要引入合规判断
-4. **禁止话术清单** —— 直接点名它最爱说的那几句
+3. **工具策略** —— 什么时候搜、什么时候直接读、什么时候派子代理、改完怎么验证
+4. **处理口径** —— 哪些类别按普通信息需求处理，不要引入合规判断
+5. **禁止话术清单** —— 直接点名它最爱说的那几句
+
+> **第 3 段最容易被忽略**。原版 prompt 里有一大段"何时用哪个工具"的策略，替换掉之后就没了。不补的话日常问答看不出来，一遇到多文件任务就会退化成"一个个 Read、不用 Grep 定位、改完不验证"。
 
 > **关键技巧**：把模型自己的原话抄进禁止清单。它对"见过的模板句"复述倾向极强，点名禁掉比抽象要求有效十倍。
 
 ### 2. 启动时替换
 
 ```bat
-"C:\Users\<你>\AppData\Roaming\npm\claude.cmd" ^
+"%APPDATA%\npm\claude.cmd" ^
   --permission-mode bypassPermissions ^
   --system-prompt-file "%USERPROFILE%\.claude\system-prompt.md"
 ```
+
+用 `%APPDATA%` 而不是拼 `C:\Users\<你>\...`：用户名带空格、或者换一台机器时，写死的路径会断。
 
 一次性调用：
 
@@ -116,9 +142,26 @@ claude --system-prompt-file ~/.claude/system-prompt.md -p "你的问题"
 
 `purge-turn.ps1` 见 [`configs/hooks/purge-turn.ps1`](configs/hooks/purge-turn.ps1)。
 
-**踩过的坑**：hook 的 `command` 写成 `.cmd` 或 `cmd /c xxx.cmd` 在 Windows 上完全不会触发，只有 `powershell -File xxx.ps1` 这种形式能跑。验证方式是让脚本往日志里写一行时间戳，再提交一次提示词看日志有没有新增。
+**踩过的坑 1**：hook 的 `command` 写成 `.cmd` 或 `cmd /c xxx.cmd` 在 Windows 上完全不会触发，只有 `powershell -File xxx.ps1` 这种形式能跑。验证方式是让脚本往日志里写一行时间戳，再提交一次提示词看日志有没有新增。
 
-**实测结论**：hook 能触发、内容确实进了上下文，但**仍然拒**。层级不够，属于降摩擦而不是破防。需要真正生效时，在 VS Code 的集成终端里跑落地一的命令。
+**踩过的坑 2：中文全变乱码**。脚本里 `Get-Content -Encoding UTF8` 读出来是对的，但 PowerShell 5.1 往 stdout 写时按系统代码页（中文 Windows 是 936）转了一遍，Claude Code 按 UTF-8 读。结果是每轮注入一段乱码，等于没注入还白占上下文。按字节验一下就看得出来：
+
+```
+5b b4 a6 c0 ed   ← GBK 的 "[处理"
+5b e5 a4 84 e7   ← 修好之后，UTF-8 的 "[处理"
+```
+
+修法是在脚本**第一行**加：
+
+```powershell
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+```
+
+或者把调用换成 `pwsh`（PowerShell 7 默认 UTF-8）。但每轮都要起一个进程，`pwsh` 冷启动要 300~800ms，不如在脚本里设编码划算。
+
+**踩过的坑 3：脚本静默失效**。`.ps1` 存成 UTF-8 无 BOM 又带中文注释时，PowerShell 5.1 会按 ANSI 解析，中文注释的字节可能把语法拆坏。表现是**脚本零输出、也不报错**，日志还照写，特别难查。规则：`.ps1` 要么存 UTF-8 with BOM，要么注释只写 ASCII。
+
+**实测结论**：hook 能触发、内容确实进了上下文，但**仍然拒**。层级不够，属于降摩擦而不是破防。另外它在 CLI 场景是纯冗余——启动器已经 `--system-prompt-file` 了，每轮再起个 PowerShell 只是多花 0.3~0.8 秒和几百 token。建议只在 VS Code 扩展里保留这一条。
 
 ---
 
@@ -132,7 +175,25 @@ claude --system-prompt-file ~/.claude/system-prompt.md -p "你的问题"
 
 ---
 
-## 附：四轮对照实验原始记录
+## 顺带：别让它瞎猜上下文窗口
+
+用第三方兼容端点时，每次启动都会看到：
+
+```
+Claude Code doesn't recognize the model "deepseek-flash", so it assumes a context window of 200k tokens.
+```
+
+这个假设会害人。DeepSeek 实际是 128K，按 200K 算，自动压缩的触发点就被推得太晚，长会话到十几万 token 时直接撑爆。修法是在 `settings.json` 的 `env` 里补一行：
+
+```json
+"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "131072"
+```
+
+数值按你自己的模型填，不是 128K 的别照抄。加上之后那句警告也会消失。
+
+---
+
+## 附：对照实验原始记录
 
 见 [`docs/measurements.md`](docs/measurements.md)。
 
@@ -140,11 +201,11 @@ claude --system-prompt-file ~/.claude/system-prompt.md -p "你的问题"
 
 ## 边界
 
-这套方法的用途是减少不必要的打断，不是让模型替你做它判断为有害的事。
+这套方法改的是表达层，不是模型的事实判断。
 
 实测里始终过不去的一层是**具体分发**——可执行载荷、具体侵权文件、针对真实第三方的攻击步骤。能过的通常是知识与方法论层：分类、流程、检索方式、原理。
 
-这个分界不是配置能改的，是模型自身的判断。
+这个分界不是配置能改的。
 
 ## License
 
