@@ -162,16 +162,33 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -nologo -codepage:65001 
 
 wrapper 每次调用会往 `~/.claude/purge-wrapper.log` 记一行 `inject` / `pass` / `off`，排查时先看这个。
 
-**想临时回原版**：包装器认一个开关文件——`~/.claude/purge-off` 存在就整段跳过注入，日志记 `off`。写个 .bat 双击切换最省事：
+**想临时回原版**：包装器认一个开关文件——`~/.claude/purge-off` 存在就整段跳过注入，日志记 `off`。
 
-```bat
-@echo off
-set "FLAG=%USERPROFILE%\.claude\purge-off"
-if exist "%FLAG%" ( del "%FLAG%" & echo 破甲模式 ) else ( type nul > "%FLAG%" & echo 正常模式 )
-pause
-```
+切换方式按需要挑：
 
-切换之后**新建**对话才生效，已经跑着的会话不受影响。顺带一个坑：`.bat` 存成 LF 换行会被 cmd 按行拆坏，报一堆"不是内部或外部命令"，必须 CRLF。
+- 最省事：桌面上放个切换程序，双击一下换模式，弹窗告诉你切到哪了。源码 [`configs/vscode/purge-toggle.cs`](configs/vscode/purge-toggle.cs)，带图标编译：
+
+  ```bat
+  C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -nologo -codepage:65001 ^
+    -target:winexe -optimize+ -win32icon:"%USERPROFILE%\.claude\purge-toggle.ico" ^
+    -out:"%USERPROFILE%\Desktop\VS Code 模式切换.exe" ^
+    "%USERPROFILE%\.claude\purge-toggle.cs"
+  ```
+
+  图标见 [`configs/vscode/purge-toggle.ico`](configs/vscode/purge-toggle.ico)，16~256 六个尺寸，小图标也不糊。
+
+- 不想要程序，一个 .bat 也行：
+
+  ```bat
+  @echo off
+  set "FLAG=%USERPROFILE%\.claude\purge-off"
+  if exist "%FLAG%" ( del "%FLAG%" & echo 破甲模式 ) else ( type nul > "%FLAG%" & echo 正常模式 )
+  pause
+  ```
+
+切换之后**新建**对话才生效，已经跑着的会话不受影响。
+
+两个坑：`.bat` 存成 LF 换行会被 cmd 按行拆坏，报一堆"不是内部或外部命令"，必须 CRLF；`.bat` 本身挂不了自定义图标，想要图标就得编成 exe（顺带还能钉任务栏）。
 
 ### 备用入口：每轮 hook 注入
 
