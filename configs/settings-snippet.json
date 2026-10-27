@@ -1,0 +1,16 @@
+{
+  "_comment": "把这个片段合并进 ~/.claude/settings.json 的 hooks 节点。已存在其它 UserPromptSubmit 条目时，追加到数组里即可（多条会依次执行）。",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\YOURNAME\\.claude\\hooks\\purge-turn.ps1\""
+          }
+        ]
+      }
+    ]
+  }
+}

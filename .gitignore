@@ -1,0 +1,14 @@
+# 本机产生的东西
+*.log
+answer.txt
+purge-hook.log
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
