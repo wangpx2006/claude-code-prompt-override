@@ -160,7 +160,18 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -nologo -codepage:65001 
 - **参数重新加引号**：`.NET` 给的 `args` 已经去引号了，要按 `CommandLineToArgvW` 规则拼回去，路径带空格才不会碎
 - **用 Job Object 兜底**：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，VS Code 杀掉 wrapper 时真正的 claude 也跟着退，不留孤儿进程
 
-wrapper 每次调用会往 `~/.claude/purge-wrapper.log` 记一行 `inject` / `pass`，排查时先看这个。
+wrapper 每次调用会往 `~/.claude/purge-wrapper.log` 记一行 `inject` / `pass` / `off`，排查时先看这个。
+
+**想临时回原版**：包装器认一个开关文件——`~/.claude/purge-off` 存在就整段跳过注入，日志记 `off`。写个 .bat 双击切换最省事：
+
+```bat
+@echo off
+set "FLAG=%USERPROFILE%\.claude\purge-off"
+if exist "%FLAG%" ( del "%FLAG%" & echo 破甲模式 ) else ( type nul > "%FLAG%" & echo 正常模式 )
+pause
+```
+
+切换之后**新建**对话才生效，已经跑着的会话不受影响。顺带一个坑：`.bat` 存成 LF 换行会被 cmd 按行拆坏，报一堆"不是内部或外部命令"，必须 CRLF。
 
 ### 备用入口：每轮 hook 注入
 

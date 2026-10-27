@@ -7,12 +7,15 @@
 // 只在「会话类」调用时注入（带 --input-format 或 --output-format），
 // auth status / --version / mcp 这类子命令原样透传，避免解析报错。
 //
-// 编译（Windows 自带 .NET Framework 的 csc 就够，不用装 VS）：
+// 开关：存在 %USERPROFILE%\.claude\purge-off 时整段跳过注入，等于回到原版。
+//
+// 编译（改完就重新编一次）：
 //   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -nologo -codepage:65001 ^
 //     -optimize+ -target:exe -out:"%USERPROFILE%\.claude\purge-wrapper.exe" ^
 //     "%USERPROFILE%\.claude\purge-wrapper.cs"
 //
-// 注意 csc 在 Git Bash 里要用 - 开头，写成 /nologo 会被 MSYS 当成路径转掉。
+// 注意两件事：csc 在 Git Bash 里要用 - 开头，写 /nologo 会被 MSYS 当成路径转掉；
+// exe 正在被 VS Code 用着时编译会报 CS0016，先把旧的改个名再编。
 
 using System;
 using System.Diagnostics;
@@ -138,6 +141,10 @@ class PurgeWrapper
             if (args[i] == "--input-format" || args[i] == "--output-format") { isSession = true; break; }
         }
 
+        // 开关文件：存在 ~/.claude/purge-off 时当成正常模式，不注入
+        bool off = File.Exists(Path.Combine(HomeDir(), @".claude\purge-off"));
+        if (isSession && off) isSession = false;
+
         string promptFile = Path.Combine(HomeDir(), @".claude\purge-system-prompt.md");
 
         StringBuilder cmd = new StringBuilder();
@@ -152,7 +159,7 @@ class PurgeWrapper
             cmd.Append(Quote(args[i]));
         }
 
-        Log((isSession ? "inject " : "pass   ") + target + " " + cmd.ToString());
+        Log((isSession ? "inject " : (off ? "off    " : "pass   ")) + target + " " + cmd.ToString());
 
         ProcessStartInfo psi = new ProcessStartInfo(target, cmd.ToString());
         psi.UseShellExecute = false;
