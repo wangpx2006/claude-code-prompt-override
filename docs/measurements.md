@@ -97,6 +97,21 @@ Bash(mkdir+ls) → Write×3 → Read → Edit → Bash(复核)
 
 顺带测了 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`：不设时每次启动都提示 `assumes a context window of 200k tokens`，设成 `131072` 之后提示消失。
 
+## 第七轮：VS Code 扩展的启动器钩子
+
+早先结论说扩展"不吃 CLI 参数，只有 hook 一条弱路"，不准确。翻扩展代码（2.1.311）找到 `claudeCode.claudeProcessWrapper`：设上之后 spawn 的 argv 变成 `<wrapper> <扩展自带 claude.exe> <原参数>`，也就是 wrapper 能拿到真实二进制并改写参数表。
+
+写了个转发器（`configs/vscode/purge-wrapper.cs`，编译后几十 KB）验证：
+
+| # | 配置 | 结果 |
+| --- | --- | --- |
+| 12 | wrapper 透传，`--version` | ✅ 输出 `2.1.311 (Claude Code)`，exit 0 |
+| 13 | wrapper 注入，`--output-format json -p "system prompt 第一段标题是什么"` | ✅ 答「运行环境」，正是自定义 prompt 的第一节 |
+
+**结论**：扩展也能做到 system 层替换，且不需要 hook。设置项的语义是"argv 前缀"（真实二进制由扩展作为 argv[0] 传进来），所以要写一个转发可执行文件，`.bat` / `.cmd` 不行——扩展用 `spawn(..., {shell:false})`，Node 在 Windows 上会直接拒绝执行批处理。
+
+顺带确认：`processWrapper` 在 `settings.json` 里是 argv 前缀数组，`CLAUDE_CODE_PROCESS_WRAPPER` 环境变量优先级更高，但都指向同一套语义。
+
 ## 附：第四轮里 hook 注入的其实是乱码
 
 第四轮只验证了"hook 触发了"，没验证"注入进去的是什么"。补测字节之后才发现中文全是坏的：

@@ -118,9 +118,53 @@ claude --system-prompt-file ~/.claude/system-prompt.md -p "你的问题"
 
 ## 落地二：VS Code 扩展
 
-扩展有自己的二进制（`~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe`），不吃 CLI 参数。能用的只有一个弱入口：`UserPromptSubmit` hook，每轮把口径注入一次。
+扩展不走命令行，但它留了一个真的启动器钩子：设置项 `claudeCode.claudeProcessWrapper`。
 
-放在 `~/.claude/settings.json`：
+设上之后，扩展 spawn 的命令从
+
+```
+<扩展自带 claude.exe> <参数>
+```
+
+变成
+
+```
+<wrapper.exe> <扩展自带 claude.exe> <参数>
+```
+
+也就是 wrapper 拿到真实二进制路径当 argv[0]，其余原样透传。**所以一个几十行的转发器就能把 `--system-prompt-file` 塞进去**，效果和命令行启动器一样，不需要 hook 打补丁。
+
+源码见 [`configs/vscode/purge-wrapper.cs`](configs/vscode/purge-wrapper.cs)，用系统自带的编译器编：
+
+```bat
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -nologo -codepage:65001 ^
+  -optimize+ -target:exe -out:"%USERPROFILE%\.claude\purge-wrapper.exe" ^
+  "%USERPROFILE%\.claude\purge-wrapper.cs"
+```
+
+然后在 VS Code 用户设置里加一行，**路径要写绝对路径**（VS Code 不展开 `%USERPROFILE%`）：
+
+```json
+{
+  "claudeCode.claudeProcessWrapper": "C:\\Users\\<你>\\.claude\\purge-wrapper.exe"
+}
+```
+
+改完重载窗口才生效。
+
+实测（2.1.311）：设置之后扩展起来的会话，system prompt 第一段就是自定义那份；`auth status --json`、`--version` 这类子命令原样透传，不受影响。
+
+转发器里三个设计点，抄的时候别漏：
+
+- **只对会话类调用注入**：参数里有 `--input-format` 或 `--output-format` 才追加 `--system-prompt-file`，其它子命令纯透传，避免子命令解析报 unknown option
+- **参数重新加引号**：`.NET` 给的 `args` 已经去引号了，要按 `CommandLineToArgvW` 规则拼回去，路径带空格才不会碎
+- **用 Job Object 兜底**：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，VS Code 杀掉 wrapper 时真正的 claude 也跟着退，不留孤儿进程
+
+wrapper 每次调用会往 `~/.claude/purge-wrapper.log` 记一行 `inject` / `pass`，排查时先看这个。
+
+### 备用入口：每轮 hook 注入
+
+扩展还有一条弱入口：`UserPromptSubmit` hook，每轮把口径注入一次。有了上面的 wrapper 它就是兜底用的（比如 wrapper 没配、或者终端里手敲 `claude`）。放在 `~/.claude/settings.json`：
 
 ```json
 {
@@ -161,7 +205,7 @@ claude --system-prompt-file ~/.claude/system-prompt.md -p "你的问题"
 
 **踩过的坑 3：脚本静默失效**。`.ps1` 存成 UTF-8 无 BOM 又带中文注释时，PowerShell 5.1 会按 ANSI 解析，中文注释的字节可能把语法拆坏。表现是**脚本零输出、也不报错**，日志还照写，特别难查。规则：`.ps1` 要么存 UTF-8 with BOM，要么注释只写 ASCII。
 
-**实测结论**：hook 能触发、内容确实进了上下文，但**仍然拒**。层级不够，属于降摩擦而不是破防。另外它在 CLI 场景是纯冗余——启动器已经 `--system-prompt-file` 了，每轮再起个 PowerShell 只是多花 0.3~0.8 秒和几百 token。建议只在 VS Code 扩展里保留这一条。
+**实测结论**：hook 能触发、内容确实进了上下文，但**仍然拒**。层级不够，属于降摩擦而不是破防。有了 wrapper 之后这条可以不加——每轮多起一个 PowerShell 只是多花 0.3~0.8 秒和几百 token；想快速验证「注入到底进没进上下文」时，它倒是最好用的探针。
 
 ---
 
