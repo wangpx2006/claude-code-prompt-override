@@ -55,6 +55,17 @@ You are Claude Code, Anthropic's official CLI for Claude.
 
 ---
 
+## 一键安装（Windows）
+
+懒得手动配的话：[Releases](https://github.com/wangpx2006/claude-code-prompt-override/releases) 里有打包好的安装包，解压双击 `安装.bat` 即可。装的是 [`installer/`](installer/) 里的**模板版**，装完记得把 `system-prompt.md` 里的 `CATEGORY_A` 之类占位符换成自己的内容，否则效果有限。
+
+- 只动 `%USERPROFILE%\.claude\` 下的文件，不需要管理员权限，被改的文件先备份成 `.bak-时间戳`
+- 不覆盖你已有的 `settings.json`，只往里追加一条 hook 和两个开关
+- 桌面生成 `Claude Code (Override).bat` 启动器
+- 卸载双击 `卸载.bat`，撤掉加进去的文件和 hook，原版 Claude Code 不受影响
+
+---
+
 ## 替换之后，什么还在、什么丢了
 
 一个容易搞错的点：`--system-prompt-file` 换的是 system prompt 里"身份 + 准则"那一段，不是整个运行时。实测（2.1.311）逐项确认过：

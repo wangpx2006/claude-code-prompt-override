@@ -1,0 +1,62 @@
+﻿Claude Code 提示词覆盖 · 一键安装包
+==========================================
+
+做什么
+  把 Claude Code 的身份 prompt 整段换掉，减少"这个我不帮"式的无谓拒绝。
+  原理和实测数据见 https://github.com/wangpx2006/claude-code-prompt-override
+
+
+装之前先知道：这份是模板
+  files\system-prompt.md 里有 CATEGORY_A / QUESTION_A 这类占位符，
+  装完能用，但效果一般。想真生效，装完打开
+      %USERPROFILE%\.claude\system-prompt.md
+  把占位符换成你自己的内容。
+
+  怎么填：把你真正在意的那几类请求写进"处理口径"，把你听过的拒绝原话
+  抄进"禁止出现的表述"。前者写具体类别，后者写原话——它对见过的模板句
+  复述倾向很强，点名禁掉比写十行"不要说教"都管用。
+
+
+怎么装
+  1. 先确保电脑上装了 Claude Code（命令行里能跑 claude）
+  2. 双击本文件夹里的「安装.bat」
+  3. 看到"安装完成"就好了，桌面上会多一个 "Claude Code (Override).bat"
+
+  如果提示没找到 claude：先装 Node.js，再开 PowerShell 跑
+      npm install -g @anthropic-ai/claude-code
+  装完重新双击「安装.bat」。
+
+
+怎么用
+  以后都双击桌面上的 "Claude Code (Override).bat" 启动。
+
+  两个要点：
+  - 必须开新会话，别用 --continue 续旧会话。旧会话里的拒绝记录会把后面
+    整个对话带偏，这是实测里最容易踩的坑。
+  - 关窗再开就是全新会话，之前的上下文不保留。
+
+
+会改你哪些文件
+  全部在 %USERPROFILE%\.claude\ 下面，不用管理员权限：
+
+    system-prompt.md          替换用的 prompt，想调内容就改这个
+    hooks\purge-turn.ps1      VS Code 里用的每轮注入 hook
+    purge-turn-context.md     hook 注入的文本
+    settings.json             只往里加一条 hook 和两个开关，其它原样保留
+
+  每个被动过的文件都会先备份成 xxx.bak-日期时间，后悔了能拿回来。
+  桌面新建一个 "Claude Code (Override).bat"。
+
+
+想卸掉
+  双击本文件夹里的「卸载.bat」，会把加进去的文件和 hook 都撤掉，
+  包括桌面那个启动器。原版 Claude Code 一点不受影响，照常用 claude 命令。
+
+
+注意
+  - 桌面启动器用了 --permission-mode bypassPermissions，也就是工具执行
+    不再逐条问你。这是自己的机器才这么用，跑别人给的不明脚本前自己看一眼。
+  - VS Code 扩展不认命令行参数，那边只能用 hook，效果比命令行弱。
+    真要用 VS Code，在里面开集成终端跑桌面的启动器，或者自己做个
+    claudeProcessWrapper 转发（见 README）。
+  - 只对非官方后端实测过。走官方 API 时效果可能不同，属于正常。
