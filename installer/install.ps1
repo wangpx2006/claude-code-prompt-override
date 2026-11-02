@@ -10,6 +10,27 @@ param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
+$LogPath = Join-Path $env:USERPROFILE 'Claude-Code-安装日志.txt'
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+try { [System.IO.File]::WriteAllText($LogPath, '', $Utf8NoBom) } catch { }
+
+function Write-Log($msg) {
+    try { [System.IO.File]::AppendAllText($LogPath, [string]$msg + "`r`n", $Utf8NoBom) } catch { }
+}
+
+# 出错时不管怎样都停下来，别让窗口一闪就没
+trap {
+    Write-Host ''
+    Write-Host "出错了：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Log ''
+    Write-Log "!!! 出错：$($_.Exception.Message)"
+    Write-Log ([string]$_.ScriptStackTrace)
+    Write-Host "详情已写进：$LogPath" -ForegroundColor Yellow
+    Write-Host '把这个文件发给帮你装的人就能定位问题。' -ForegroundColor Yellow
+    Read-Host '按回车关闭'
+    exit 1
+}
+
 $Here         = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FilesDir     = Join-Path $Here 'files'
 $ClaudeDir    = Join-Path $env:USERPROFILE '.claude'
@@ -20,19 +41,29 @@ $HookPath     = Join-Path $HooksDir  'purge-turn.ps1'
 $ContextPath  = Join-Path $ClaudeDir 'purge-turn-context.md'
 $Stamp        = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-# 桌面路径：正常情况下由系统给出；取不到时退回 %USERPROFILE%\Desktop
-function Get-DesktopDir {
+# 桌面可能有多个：系统给的、本地的、OneDrive 重定向过去的。
+# 全都列出来，能写的都放一份，免得同学桌面被 OneDrive 搬走找不到。
+function Get-DesktopDirs {
+    $list = @()
     $d = ''
     try { $d = [Environment]::GetFolderPath('Desktop') } catch { }
-    if (-not $d) { $d = Join-Path $env:USERPROFILE 'Desktop' }
-    if (-not (Test-Path $d)) { $d = Join-Path $env:USERPROFILE 'Desktop' }
-    return $d
+    if ($d) { $list += $d }
+    foreach ($p in @(
+        (Join-Path $env:USERPROFILE 'Desktop'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
+        (Join-Path $env:USERPROFILE 'OneDrive\桌面'),
+        (Join-Path $env:USERPROFILE '桌面')
+    )) {
+        if ((Test-Path $p) -and ($list -notcontains $p)) { $list += $p }
+    }
+    if ($list.Count -eq 0) { $list = @((Join-Path $env:USERPROFILE 'Desktop')) }
+    return $list
 }
 
-function Say($msg)  { Write-Host $msg }
-function Ok($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
-function Warn($msg) { Write-Host "  [!]  $msg" -ForegroundColor Yellow }
-function Bad($msg)  { Write-Host "  [X]  $msg" -ForegroundColor Red }
+function Say($msg)  { Write-Host $msg;  Write-Log $msg }
+function Ok($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green;  Write-Log "  [OK] $msg" }
+function Warn($msg) { Write-Host "  [!]  $msg" -ForegroundColor Yellow; Write-Log "  [!]  $msg" }
+function Bad($msg)  { Write-Host "  [X]  $msg" -ForegroundColor Red;    Write-Log "  [X]  $msg" }
 
 function Write-Utf8NoBom($path, $text) {
     [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
@@ -148,10 +179,11 @@ if ($Uninstall) {
         }
     }
 
-    $desktop = Get-DesktopDir
-    foreach ($name in @('Claude Code (Override).bat', 'Claude Code (Purge).bat')) {
-        $bat = Join-Path $desktop $name
-        if (Test-Path $bat) { Remove-Item $bat -Force; Ok "已删除桌面启动器 $name" }
+    foreach ($desktop in @(Get-DesktopDirs)) {
+        foreach ($name in @('Claude Code (Override).bat', 'Claude Code (Purge).bat')) {
+            $bat = Join-Path $desktop $name
+            if (Test-Path $bat) { Remove-Item $bat -Force; Ok "已删除桌面启动器 $desktop\$name" }
+        }
     }
 
     Say ''
@@ -165,6 +197,15 @@ Say ''
 Say '=================================================='
 Say '   Claude Code 提示词覆盖 · 一键安装'
 Say '=================================================='
+Say ''
+
+Say "[诊断] 时间      $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Say "[诊断] 用户      $env:USERNAME"
+Say "[诊断] 安装包    $Here"
+Say "[诊断] 桌面      $((@(Get-DesktopDirs)) -join ' | ')"
+Say "[诊断] PowerShell $($PSVersionTable.PSVersion)"
+Say "[诊断] 版本      v2 (2026-10-30)"
+Say "[诊断] 日志      $LogPath"
 Say ''
 
 if (-not (Test-Path $FilesDir)) {
@@ -307,21 +348,37 @@ if ($null -ne $cfg) {
 # --- 5. 桌面启动器
 Say ''
 Say '[5/5] 创建桌面启动器'
-$desktop = Get-DesktopDir
-if (-not (Test-Path $desktop)) { New-Item -ItemType Directory -Path $desktop -Force | Out-Null }
-$batPath = Join-Path $desktop 'Claude Code (Override).bat'
 $bat = @"
 @echo off
+cd /d "%USERPROFILE%"
 chcp 65001 >nul
 title Claude Code (Override)
-cd /d "%USERPROFILE%"
 "$claude" --permission-mode bypassPermissions --system-prompt-file "%USERPROFILE%\.claude\system-prompt.md"
 echo.
 echo Claude Code has closed.
 pause
 "@
-Write-Utf8NoBom $batPath $bat
-Ok "已创建 $batPath"
+
+# .bat 必须是 CRLF，LF 行尾会让 cmd 错行；内容也必须纯 ASCII
+$bat = ($bat -split "`r?`n") -join "`r`n"
+
+$madeAny = $false
+foreach ($desktop in @(Get-DesktopDirs)) {
+    try {
+        if (-not (Test-Path $desktop)) { New-Item -ItemType Directory -Path $desktop -Force | Out-Null }
+        $batPath = Join-Path $desktop 'Claude Code (Override).bat'
+        Write-Utf8NoBom $batPath $bat
+        Ok "已创建 $batPath"
+        $madeAny = $true
+    } catch {
+        Warn "这个桌面放不进去，跳过：$desktop"
+    }
+}
+if (-not $madeAny) {
+    $batPath = Join-Path $env:USERPROFILE 'Claude Code (Override).bat'
+    Write-Utf8NoBom $batPath $bat
+    Warn "桌面写不进去，启动器改放这里了：$batPath"
+}
 
 if (-not $claudeReady) {
     Warn '还没找到 claude 命令，这个启动器现在打不开。装完 Claude Code 后重跑一次安装包即可。'
@@ -337,5 +394,8 @@ Say '  不要用旧的快捷方式或 --continue，每次都要开新会话。'
 Say ''
 Say '想改提示词内容：编辑 %USERPROFILE%\.claude\system-prompt.md'
 Say '想卸掉：双击本包的 卸载.bat'
+Say ''
+Say "这次的详细过程记在：$LogPath"
+Say '装完有问题，把这个文件发过去就行。'
 Say ''
 Read-Host '按回车关闭'

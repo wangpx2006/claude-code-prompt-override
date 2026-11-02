@@ -1,0 +1,3 @@
+# .bat / .cmd 必须是 CRLF，否则 cmd 会错行、甚至把命令啃成半截
+*.bat text eol=crlf
+*.cmd text eol=crlf
